@@ -1,5 +1,7 @@
 """Constants & helpers for the Discord Interactions API (no bot library)."""
 
+import asyncio
+
 import httpx
 from nacl.exceptions import BadSignatureError
 from nacl.signing import VerifyKey
@@ -148,10 +150,60 @@ def modal_value(interaction: dict, field: str) -> str:
     return ""
 
 
+MAX_CONTENT = 2000  # Discord message content limit
+
+
+def split_message(blocks: list[str], limit: int = MAX_CONTENT, sep: str = "\n\n") -> list[str]:
+    """Pack text blocks into as few messages as possible, each at most `limit` characters.
+    Blocks are kept whole when they fit in a message; a block longer than `limit` is spread
+    line by line across messages (and a single over-long line is hard-cut)."""
+    messages: list[str] = []
+    current = ""
+
+    def add(text: str, joiner: str) -> None:
+        nonlocal current
+        if not current:
+            current = text
+        elif len(current) + len(joiner) + len(text) <= limit:
+            current += joiner + text
+        else:
+            messages.append(current)
+            current = text
+
+    for block in blocks:
+        if len(block) <= limit:
+            add(block, sep)
+            continue
+        for i, line in enumerate(block.split("\n")):
+            while len(line) > limit:
+                if current:
+                    messages.append(current)
+                # Cut at the last space so mentions/words aren't broken in half
+                cut = line.rfind(" ", 0, limit + 1)
+                cut = cut if cut > 0 else limit
+                messages.append(line[:cut].rstrip())
+                current, line = "", line[cut:].lstrip()
+            add(line, sep if i == 0 else "\n")
+
+    if current:
+        messages.append(current)
+    return messages
+
+
 async def send_followup(token: str, content: str, allowed_mentions: dict | None = None) -> None:
     """Send a public message to the channel via the interaction webhook (valid for 15 minutes)."""
+    await send_followups(token, [content], allowed_mentions)
+
+
+async def send_followups(token: str, contents: list[str], allowed_mentions: dict | None = None) -> None:
+    """Send several follow-up messages in order, waiting out rate limits (429)."""
     url = f"{config.DISCORD_API}/webhooks/{config.APPLICATION_ID}/{token}"
-    payload = {"content": content, "allowed_mentions": allowed_mentions or {"parse": []}}
     async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.post(url, json=payload)
-        resp.raise_for_status()
+        for content in contents:
+            payload = {"content": content, "allowed_mentions": allowed_mentions or {"parse": []}}
+            for _ in range(5):
+                resp = await client.post(url, json=payload)
+                if resp.status_code != 429:
+                    break
+                await asyncio.sleep(float(resp.json().get("retry_after", 1)))
+            resp.raise_for_status()

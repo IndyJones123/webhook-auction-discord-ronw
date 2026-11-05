@@ -207,27 +207,29 @@ async def status(interaction: dict, bg: BackgroundTasks) -> dict:
     if not items:
         return dc.message("No items have been listed yet.")
 
-    blocks = []
+    # Compact layout: one line per item with its queue in order, and every item
+    # without bids collected on a single line at the end.
+    lines, no_bids = [], []
     for it in items:
+        if not it["bid_count"]:
+            no_bids.append(it["name"])
+            continue
         bids = await db.bids_for_item(it["id"])
-        header = f"**{it['name']}**" + (f" — {it['description']}" if it["description"] else "")
-        if bids:
-            queue = "\n".join(f"> {i}. <@{b['user_id']}>" for i, b in enumerate(bids, 1))
-        else:
-            queue = "> _No bids yet_"
-        blocks.append(f"{header}\n{queue}")
+        queue = " → ".join(f"<@{b['user_id']}>" for b in bids)
+        lines.append(f"**{it['name']}** ({len(bids)}): {queue}")
 
-    # Embed description limit = 4096 characters
-    description = ""
-    for i, block in enumerate(blocks):
-        chunk = ("\n\n" if description else "") + block
-        if len(description) + len(chunk) > 3900:
-            description += f"\n\n…and {len(blocks) - i} more items"
-            break
-        description += chunk
+    total_bids = sum(it["bid_count"] for it in items)
+    header = f"## Bidding Status\n-# {len(items)} items · {total_bids} bids · queue order left → right"
+    blocks = [header + ("\n" + "\n".join(lines) if lines else "")]
+    if no_bids:
+        blocks.append("-# No bids yet: " + ", ".join(no_bids))
 
-    embed = {"title": "Bidding Status", "description": description, "color": 0x5865F2}
-    return dc.message(embeds=[embed])
+    # Discord caps a message at 2000 characters: reply with the first part and
+    # send the rest as follow-up messages, in order.
+    messages = dc.split_message(blocks)
+    if len(messages) > 1:
+        bg.add_task(dc.send_followups, interaction["token"], messages[1:])
+    return dc.message(messages[0])
 
 
 async def delete_bid(interaction: dict, bg: BackgroundTasks) -> dict:
