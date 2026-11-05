@@ -1,17 +1,13 @@
 """Slash command definitions and their handlers."""
 
-import hmac
-
 import asyncpg
 from fastapi import BackgroundTasks
 
-from . import config, db
+from . import db
 from . import discord as dc
 
 ADMIN_PERMS = str(dc.MANAGE_GUILD)
 STRING = 3  # option type: string
-
-PASSWORD_OPTION = {"type": STRING, "name": "password", "description": "Admin password", "required": True}
 
 # ---------------------------------------------------------------------------
 # Command definitions (sent to Discord by scripts/register_commands.py)
@@ -23,7 +19,6 @@ DEFINITIONS = [
         "default_member_permissions": ADMIN_PERMS,
         "options": [
             {"type": STRING, "name": "name", "description": "Item name", "required": True, "max_length": 100},
-            PASSWORD_OPTION,
             {"type": STRING, "name": "description", "description": "Item description", "max_length": 500},
         ],
     },
@@ -33,7 +28,6 @@ DEFINITIONS = [
         "name": "delete-item",
         "description": "Unlist an item (all its bids are removed too)",
         "default_member_permissions": ADMIN_PERMS,
-        "options": [PASSWORD_OPTION],
     },
     {"name": "status", "description": "Show all items and their bid queues"},
     {
@@ -44,12 +38,6 @@ DEFINITIONS = [
 ]
 
 ADMIN_ONLY = dc.message("This command is for admins only.", ephemeral=True)
-WRONG_PASSWORD = dc.message("Wrong password.", ephemeral=True)
-
-
-def _password_ok(interaction: dict) -> bool:
-    given = _get_option(interaction, "password") or ""
-    return hmac.compare_digest(given.encode(), config.ADMIN_PASSWORD.encode())
 
 
 def _item_options(items) -> list[dict]:
@@ -73,8 +61,9 @@ def _get_option(interaction: dict, name: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Paged pickers
 #
-# Every dropdown is built by a picker so it can be re-rendered at any page.
-# Prev/Next buttons carry custom_id "page:<picker>:<arg>:<page>".
+# Every dropdown is built by a picker so it can be re-rendered at any page
+# and filtered by a search query. Buttons carry the picker key
+# ("<picker>" or "<picker>.<arg>"); see dc.picker for the custom_id format.
 # A picker returns (prompt, select_custom_id, placeholder, options), or a
 # plain string when there is nothing to pick.
 # ---------------------------------------------------------------------------
@@ -147,18 +136,35 @@ PICKERS = {
 }
 
 
-async def _render_picker(key: str, interaction: dict, page: int = 0, arg: str = "") -> tuple[str, list]:
+def _parse_key(key: str) -> tuple[str, str] | None:
+    """key = "<picker>" or "<picker>.<arg>". Returns (picker, arg), or None if unknown."""
+    name, _, arg = key.partition(".")
+    return (name, arg) if name in PICKERS else None
+
+
+async def _render_picker(name: str, interaction: dict, page: int = 0, arg: str = "",
+                         query: str = "") -> tuple[str, list]:
     """Returns (content, components). Components are empty when there is nothing to pick."""
-    picker, _ = PICKERS[key]
+    picker, _ = PICKERS[name]
     result = await picker(interaction, arg)
     if isinstance(result, str):
         return result, []
     prompt, select_id, placeholder, options = result
-    return prompt, dc.paged_select(select_id, placeholder, options, page, f"page:{key}:{arg}")
+
+    query = query.strip()
+    if query:
+        needle = query.casefold()
+        options = [o for o in options if needle in o["label"].casefold()]
+        shown = query.replace("`", "'")
+        prompt += (f"\n-# Search `{shown}`: {len(options)} match(es)." if options
+                   else f"\n-# No matches for `{shown}`. Try another search or clear it.")
+
+    key = f"{name}.{arg}" if arg else name
+    return prompt, dc.picker(select_id, placeholder, options, page, key, query)
 
 
-async def _picker_message(key: str, interaction: dict) -> dict:
-    content, components = await _render_picker(key, interaction)
+async def _picker_message(name: str, interaction: dict) -> dict:
+    content, components = await _render_picker(name, interaction)
     return dc.message(content, ephemeral=True, components=components)
 
 
@@ -168,8 +174,6 @@ async def _picker_message(key: str, interaction: dict) -> dict:
 async def add_item(interaction: dict, bg: BackgroundTasks) -> dict:
     if not dc.is_admin(interaction):
         return ADMIN_ONLY
-    if not _password_ok(interaction):
-        return WRONG_PASSWORD
 
     name = (_get_option(interaction, "name") or "").strip()
     description = (_get_option(interaction, "description") or "").strip() or None
@@ -195,8 +199,6 @@ async def cancel_bid(interaction: dict, bg: BackgroundTasks) -> dict:
 async def delete_item(interaction: dict, bg: BackgroundTasks) -> dict:
     if not dc.is_admin(interaction):
         return ADMIN_ONLY
-    if not _password_ok(interaction):
-        return WRONG_PASSWORD
     return await _picker_message("del-item", interaction)
 
 
@@ -235,16 +237,50 @@ async def delete_bid(interaction: dict, bg: BackgroundTasks) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Component handlers (dropdowns + page buttons)
+# Component handlers (dropdowns, page/search buttons, search modal)
 # ---------------------------------------------------------------------------
-async def on_page_button(interaction: dict, custom_id: str, bg: BackgroundTasks) -> dict:
-    # custom_id = "page:<picker>:<arg>:<page>"
-    _, key, arg, page = custom_id.split(":", 3)
-    if key not in PICKERS or not page.isdigit():
-        return dc.update("This button has expired.")
-    if PICKERS[key][1] and not dc.is_admin(interaction):
+EXPIRED = dc.update("This button has expired. Run the command again.")
+
+
+def _allowed(name: str, interaction: dict) -> bool:
+    return not PICKERS[name][1] or dc.is_admin(interaction)
+
+
+async def on_button(interaction: dict, custom_id: str, bg: BackgroundTasks) -> dict:
+    kind, _, rest = custom_id.partition(":")
+
+    if kind == "page":  # page:<key>:<page>:<query>
+        key, page, query = (rest.split(":", 2) + ["", ""])[:3]
+        parsed = _parse_key(key)
+        if not parsed or not page.lstrip("-").isdigit():
+            return EXPIRED
+        name, arg = parsed
+        if not _allowed(name, interaction):
+            return dc.update("Admins only.")
+        content, components = await _render_picker(name, interaction, int(page), arg, query)
+        return dc.update(content, components)
+
+    if kind == "search":  # search:<key> -> open the modal
+        parsed = _parse_key(rest)
+        if not parsed:
+            return EXPIRED
+        if not _allowed(parsed[0], interaction):
+            return dc.update("Admins only.")
+        return dc.search_modal(rest)
+
+    return EXPIRED
+
+
+async def on_search_submit(interaction: dict, bg: BackgroundTasks) -> dict:
+    # Modal custom_id = searchq:<key>
+    parsed = _parse_key(interaction["data"]["custom_id"].partition(":")[2])
+    if not parsed:
+        return EXPIRED
+    name, arg = parsed
+    if not _allowed(name, interaction):
         return dc.update("Admins only.")
-    content, components = await _render_picker(key, interaction, int(page), arg)
+    query = dc.modal_value(interaction, "q").strip()[:dc.SEARCH_MAX]
+    content, components = await _render_picker(name, interaction, 0, arg, query)
     return dc.update(content, components)
 
 
@@ -296,7 +332,7 @@ async def on_delete_item_select(interaction: dict, value: str, bg: BackgroundTas
 async def on_delete_bid_select(interaction: dict, value: str, bg: BackgroundTasks) -> dict:
     if not dc.is_admin(interaction):
         return dc.update("Admins only.")
-    content, components = await _render_picker("del-bidder", interaction, 0, value)
+    content, components = await _render_picker("del-bidder", interaction, 0, str(int(value)))
     return dc.update(content, components)
 
 

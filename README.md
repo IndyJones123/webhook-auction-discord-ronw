@@ -8,17 +8,18 @@ on your server, and the server must reply within 3 seconds.
 
 | Command | Who | What it does |
 |---|---|---|
-| `/add-item name password [description]` | Admin | List a new item |
+| `/add-item name [description]` | Admin | List a new item |
 | `/bid-item` | Everyone | Pick an item from a dropdown and join its queue |
 | `/cancel-bid` | Everyone | Pick one of your own bids to cancel |
-| `/delete-item password` | Admin | Unlist an item (its bids are removed too) |
+| `/delete-item` | Admin | Unlist an item (its bids are removed too) |
 | `/status` | Everyone | All items and their bid queues, including items with no bids |
 | `/delete-bid` | Admin | Pick an item, then pick which bidder to remove from its queue |
 
 "Admin" = a member with the **Manage Server** or **Administrator** permission.
-`/add-item` and `/delete-item` also require the password set in `ADMIN_PASSWORD`.
 Discord dropdowns hold at most 25 options, so longer lists are split into pages of 25 with
-**◀ Prev / Next ▶** buttons under the dropdown. This applies to every dropdown, including the bidder list in `/delete-bid`.
+**◀ Prev / Next ▶** buttons under the dropdown. Every dropdown also has a **🔍 Search** button that opens a
+popup to filter the list by name (case-insensitive); **✖ Clear** resets the filter. This applies to every
+dropdown, including the bidder list in `/delete-bid`.
 
 ---
 
@@ -131,11 +132,7 @@ DISCORD_PUBLIC_KEY=abcdef...
 DISCORD_BOT_TOKEN=MTIz...
 DISCORD_GUILD_ID=
 DATABASE_URL=postgresql://auction:change_to_a_strong_password@localhost:5432/discord_auction
-ADMIN_PASSWORD=your_admin_password
 ```
-
-- `ADMIN_PASSWORD` is required; the app won't start without it. Admins type it into the `password`
-  option of `/add-item` and `/delete-item`.
 
 - Leave `DISCORD_GUILD_ID` empty to register the commands **globally** (in every server the bot is invited to;
   it can take up to 1 hour to propagate).
