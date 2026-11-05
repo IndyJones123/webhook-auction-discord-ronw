@@ -1,4 +1,4 @@
-"""Konstanta & helper untuk Discord Interactions API (tanpa library bot)."""
+"""Constants & helpers for the Discord Interactions API (no bot library)."""
 
 import httpx
 from nacl.exceptions import BadSignatureError
@@ -39,7 +39,7 @@ def is_admin(interaction: dict) -> bool:
 
 
 def get_user(interaction: dict) -> dict:
-    # Di server user ada di member.user, di DM langsung di user
+    # In a guild the user is under member.user; in DMs it is under user
     return interaction.get("member", {}).get("user") or interaction["user"]
 
 
@@ -60,25 +60,48 @@ def message(content: str = "", *, ephemeral: bool = False, components=None, embe
     return {"type": response_type, "data": data}
 
 
-def update(content: str) -> dict:
-    """Ganti isi pesan ephemeral (dropdown) dan hilangkan komponennya."""
-    return {"type": UPDATE_MESSAGE, "data": {"content": content, "components": []}}
+def update(content: str, components=None) -> dict:
+    """Replace the ephemeral (dropdown) message content; components default to none."""
+    return {"type": UPDATE_MESSAGE, "data": {"content": content, "components": components or []}}
 
 
-def select_row(custom_id: str, placeholder: str, options: list[dict]) -> list[dict]:
-    return [{
+def page_count(total: int) -> int:
+    return max(1, -(-total // MAX_SELECT_OPTIONS))
+
+
+def paged_select(custom_id: str, placeholder: str, options: list[dict], page: int,
+                 page_id: str) -> list[dict]:
+    """A select menu showing one page of options, plus Prev/Next buttons when there is more
+    than one page. Buttons use custom_id f"{page_id}:{target_page}"."""
+    pages = page_count(len(options))
+    page = min(max(page, 0), pages - 1)
+    start = page * MAX_SELECT_OPTIONS
+    rows = [{
         "type": 1,
         "components": [{
             "type": 3,
             "custom_id": custom_id,
-            "placeholder": placeholder,
-            "options": options[:MAX_SELECT_OPTIONS],
+            "placeholder": f"{placeholder} (page {page + 1}/{pages})" if pages > 1 else placeholder,
+            "options": options[start:start + MAX_SELECT_OPTIONS],
         }],
     }]
+    if pages > 1:
+        rows.append({
+            "type": 1,
+            "components": [
+                {"type": 2, "style": 2, "label": "◀ Prev", "custom_id": f"{page_id}:{page - 1}",
+                 "disabled": page == 0},
+                {"type": 2, "style": 2, "label": f"Page {page + 1}/{pages}", "custom_id": f"{page_id}:info",
+                 "disabled": True},
+                {"type": 2, "style": 2, "label": "Next ▶", "custom_id": f"{page_id}:{page + 1}",
+                 "disabled": page == pages - 1},
+            ],
+        })
+    return rows
 
 
 async def send_followup(token: str, content: str, allowed_mentions: dict | None = None) -> None:
-    """Kirim pesan publik ke channel lewat interaction webhook (valid 15 menit)."""
+    """Send a public message to the channel via the interaction webhook (valid for 15 minutes)."""
     url = f"{config.DISCORD_API}/webhooks/{config.APPLICATION_ID}/{token}"
     payload = {"content": content, "allowed_mentions": allowed_mentions or {"parse": []}}
     async with httpx.AsyncClient(timeout=10) as client:

@@ -23,14 +23,14 @@ async def close() -> None:
 
 def pool() -> asyncpg.Pool:
     if _pool is None:
-        raise RuntimeError("Database belum terkoneksi")
+        raise RuntimeError("Database is not connected")
     return _pool
 
 
 # --- Items -----------------------------------------------------------------
 
 async def add_item(name: str, description: str | None, created_by: str) -> int:
-    """Raise asyncpg.UniqueViolationError kalau nama sudah dipakai."""
+    """Raises asyncpg.UniqueViolationError if the name is already taken."""
     return await pool().fetchval(
         "INSERT INTO items (name, description, created_by) VALUES ($1, $2, $3) RETURNING id",
         name, description, created_by,
@@ -52,7 +52,7 @@ async def items_with_bid_count():
 
 
 async def delete_item(item_id: int):
-    """Hapus item (bid ikut terhapus via CASCADE). Return (item, jumlah_bid) atau None."""
+    """Delete an item (bids cascade). Returns (item, bid_count) or None."""
     async with pool().acquire() as conn, conn.transaction():
         count = await conn.fetchval("SELECT COUNT(*) FROM bids WHERE item_id = $1", item_id)
         item = await conn.fetchrow("DELETE FROM items WHERE id = $1 RETURNING *", item_id)
@@ -62,7 +62,7 @@ async def delete_item(item_id: int):
 # --- Bids ------------------------------------------------------------------
 
 async def add_bid(item_id: int, user_id: str, username: str) -> int:
-    """Return posisi antrian (1-based). Raise UniqueViolationError kalau user sudah bid."""
+    """Returns the queue position (1-based). Raises UniqueViolationError if the user already bid."""
     async with pool().acquire() as conn, conn.transaction():
         bid_id = await conn.fetchval(
             "INSERT INTO bids (item_id, user_id, username) VALUES ($1, $2, $3) RETURNING id",
@@ -90,7 +90,7 @@ async def bids_for_user(user_id: str):
 
 
 async def cancel_bid(bid_id: int, user_id: str):
-    """Hapus bid milik user. Return nama item, atau None kalau tidak ditemukan."""
+    """Delete a bid owned by the user. Returns the item name, or None if not found."""
     return await pool().fetchval(
         """
         WITH d AS (DELETE FROM bids WHERE id = $1 AND user_id = $2 RETURNING item_id)
@@ -100,14 +100,6 @@ async def cancel_bid(bid_id: int, user_id: str):
     )
 
 
-async def pop_first_bid(item_id: int):
-    """Hapus bidder paling depan di antrian item (atomik). Return bid yang dihapus atau None."""
-    return await pool().fetchrow(
-        """
-        DELETE FROM bids WHERE id = (
-            SELECT id FROM bids WHERE item_id = $1
-            ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED
-        ) RETURNING *
-        """,
-        item_id,
-    )
+async def delete_bid(bid_id: int):
+    """Delete any bid by id (admin). Returns the removed bid or None."""
+    return await pool().fetchrow("DELETE FROM bids WHERE id = $1 RETURNING *", bid_id)

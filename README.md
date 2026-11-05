@@ -1,121 +1,123 @@
 # Discord Auction Gateway
 
-Backend FastAPI + PostgreSQL untuk bot Discord berbasis **Interactions Endpoint** (webhook HTTP, tanpa gateway websocket).
-Bot tidak perlu "online" seperti bot biasa: Discord mengirim setiap slash command ke `POST /interactions`
-di server kamu, lalu server membalas dalam waktu maksimal 3 detik.
+FastAPI + PostgreSQL backend for a Discord bot built on the **Interactions Endpoint** (HTTP webhooks, no gateway websocket).
+The bot never needs to be "online" like a regular bot: Discord sends every slash command to `POST /interactions`
+on your server, and the server must reply within 3 seconds.
 
-## Command
+## Commands
 
-| Command | Siapa | Fungsi |
+| Command | Who | What it does |
 |---|---|---|
-| `/add-item nama [deskripsi]` | Admin | List barang baru |
-| `/bid-item` | Semua | Pilih barang lewat dropdown, masuk antrian |
-| `/cancel-bid` | Semua | Pilih bid milik sendiri untuk dibatalkan |
-| `/delete-item` | Admin | Unlist barang (bid-nya ikut terhapus) |
-| `/status` | Semua | Semua barang + antrian bid, termasuk yang belum di-bid |
-| `/delete-bid` | Admin | Pilih barang, hapus bidder **paling depan** (pemenang) |
+| `/add-item name password [description]` | Admin | List a new item |
+| `/bid-item` | Everyone | Pick an item from a dropdown and join its queue |
+| `/cancel-bid` | Everyone | Pick one of your own bids to cancel |
+| `/delete-item password` | Admin | Unlist an item (its bids are removed too) |
+| `/status` | Everyone | All items and their bid queues, including items with no bids |
+| `/delete-bid` | Admin | Pick an item, then pick which bidder to remove from its queue |
 
-"Admin" = member dengan permission **Manage Server** atau **Administrator**.
-Dropdown Discord maksimal 25 opsi, jadi kalau barang lebih dari 25 hanya 25 pertama yang tampil.
+"Admin" = a member with the **Manage Server** or **Administrator** permission.
+`/add-item` and `/delete-item` also require the password set in `ADMIN_PASSWORD`.
+Discord dropdowns hold at most 25 options, so longer lists are split into pages of 25 with
+**◀ Prev / Next ▶** buttons under the dropdown. This applies to every dropdown, including the bidder list in `/delete-bid`.
 
 ---
 
-## 1. Setup aplikasi di Discord Developer Portal
+## 1. Discord Developer Portal setup
 
-1. Buka <https://discord.com/developers/applications> → **New Application** → beri nama → Create.
-2. Halaman **General Information**, catat:
+1. Go to <https://discord.com/developers/applications> → **New Application** → give it a name → Create.
+2. On **General Information**, copy:
    - **Application ID** → `DISCORD_APPLICATION_ID`
    - **Public Key** → `DISCORD_PUBLIC_KEY`
-3. Menu **Bot** → **Reset Token** → salin token → `DISCORD_BOT_TOKEN`.
-   Token hanya tampil sekali. Simpan baik-baik dan jangan di-commit.
-   Token ini hanya dipakai untuk mendaftarkan slash command; app tidak login sebagai bot.
-   Privileged Gateway Intents tidak perlu diaktifkan.
-4. **ID server** (opsional, untuk `DISCORD_GUILD_ID`): di Discord, aktifkan
-   *User Settings → Advanced → Developer Mode*, lalu klik kanan nama server → **Copy Server ID**.
-5. **Invite bot ke server**: menu **Installation** (atau **OAuth2 → URL Generator**), centang scope
-   `applications.commands` (dan `bot` kalau mau bot tampil di daftar member), lalu buka URL yang dihasilkan
-   dan pilih server. Bentuk URL-nya kurang lebih:
+3. **Bot** → **Reset Token** → copy the token → `DISCORD_BOT_TOKEN`.
+   The token is shown only once. Keep it safe and never commit it.
+   It is only used to register slash commands; the app never logs in as a bot.
+   Privileged Gateway Intents are not needed.
+4. **Server ID** (optional, for `DISCORD_GUILD_ID`): in Discord, enable
+   *User Settings → Advanced → Developer Mode*, then right-click the server name → **Copy Server ID**.
+5. **Invite the bot**: under **Installation**, make sure **Guild Install** is checked and the default install
+   scopes include `applications.commands` and `bot`. Then use the Install Link, or build the URL yourself:
    ```
    https://discord.com/oauth2/authorize?client_id=<APPLICATION_ID>&scope=applications.commands+bot
    ```
+   A URL without `&scope=...` will not work.
 
-**Interactions Endpoint URL** baru diisi setelah server jalan dan bisa diakses lewat HTTPS (langkah 3.6).
+Fill in the **Interactions Endpoint URL** only after the server is running and reachable over HTTPS (step 3.7).
 
 ---
 
-## 2. Menjalankan di lokal (development)
+## 2. Running locally (development)
 
-1. **Database**: `docker compose up -d` (Postgres di `localhost:5432`, user/password `postgres`),
-   atau pakai Postgres yang sudah ada dan buat database `discord_auction`.
-   Tabel dibuat otomatis saat app start (`schema.sql`).
-2. **Env**: `copy .env.example .env` lalu isi nilai dari langkah 1.
-   Isi `DISCORD_GUILD_ID` supaya command langsung muncul di server kamu.
+1. **Database**: `docker compose up -d` (Postgres on `localhost:5432`, user/password `postgres`),
+   or use an existing Postgres and create a `discord_auction` database.
+   Tables are created automatically on startup (`schema.sql`).
+2. **Env**: `copy .env.example .env` and fill in the values from step 1.
+   Set `DISCORD_GUILD_ID` so the commands show up in your server immediately.
 3. **Install** (Windows):
    ```
    py -3.12 -m venv .venv
    .venv\Scripts\activate
    pip install -r requirements.txt
    ```
-4. **Daftarkan command**: `python -m scripts.register_commands`
-5. **Jalankan**: `uvicorn app.main:app --reload --port 8000`
-6. **Expose ke internet** (Discord butuh HTTPS publik):
-   `cloudflared tunnel --url http://localhost:8000` atau `ngrok http 8000`.
-7. Isi **Interactions Endpoint URL** di Developer Portal dengan `https://<url-tunnel>/interactions` lalu Save.
+4. **Register commands**: `python -m scripts.register_commands`
+5. **Run**: `uvicorn app.main:app --reload --port 8000`
+6. **Expose it to the internet** (Discord requires public HTTPS):
+   `cloudflared tunnel --url http://localhost:8000` or `ngrok http 8000`.
+7. Set the **Interactions Endpoint URL** in the Developer Portal to `https://<tunnel-url>/interactions` and Save.
 
-URL tunnel gratis berubah setiap kali dijalankan ulang, jadi cara ini hanya untuk testing.
+Free tunnel URLs change every time they restart, so this is for testing only.
 
 ---
 
-## 3. Deploy ke production (VPS Ubuntu)
+## 3. Production deployment (Ubuntu VPS)
 
-Contoh di bawah memakai Ubuntu 22.04/24.04, Python 3.12, PostgreSQL, systemd, dan Nginx + Let's Encrypt.
-Yang dibutuhkan: VPS dengan IP publik dan sebuah domain/subdomain (misal `auction.domainkamu.com`)
-yang record **A**-nya sudah mengarah ke IP VPS.
+The example below uses Ubuntu 22.04/24.04, Python 3.12, PostgreSQL, systemd, and Nginx + Let's Encrypt.
+You need a VPS with a public IP and a domain/subdomain (e.g. `auction.yourdomain.com`)
+whose **A** record points to the VPS.
 
-Pilih region VPS yang dekat dengan server Discord (misal Singapore atau US). Discord membatalkan
-interaction yang tidak dibalas dalam 3 detik.
+Pick a VPS region close to Discord's servers (e.g. Singapore or US). Discord cancels any interaction
+that isn't answered within 3 seconds.
 
-### 3.1 Install paket
+### 3.1 Install packages
 
 ```bash
 sudo apt update
 sudo apt install -y python3.12 python3.12-venv postgresql nginx certbot python3-certbot-nginx git
 ```
 
-Kalau `python3.12` tidak tersedia di repo Ubuntu kamu, tambahkan PPA `deadsnakes` atau jalankan via Docker.
+If `python3.12` isn't available in your Ubuntu repo, add the `deadsnakes` PPA or run it in Docker.
 
-### 3.2 Siapkan database
+### 3.2 Prepare the database
 
 ```bash
 sudo -u postgres psql
 ```
 ```sql
-CREATE USER auction WITH PASSWORD 'ganti_password_kuat';
+CREATE USER auction WITH PASSWORD 'change_to_a_strong_password';
 CREATE DATABASE discord_auction OWNER auction;
 \q
 ```
 
-Postgres cukup listen di `localhost` (default). Jangan buka port 5432 ke internet.
+Postgres only needs to listen on `localhost` (the default). Never expose port 5432 to the internet.
 
-> Kalau mau pakai `docker-compose.yml` di production, **ganti** `POSTGRES_PASSWORD` dan ubah
-> `ports` menjadi `"127.0.0.1:5432:5432"` supaya database tidak terekspos ke publik.
+> If you use `docker-compose.yml` in production, **change** `POSTGRES_PASSWORD` and set
+> `ports` to `"127.0.0.1:5432:5432"` so the database isn't publicly reachable.
 
-### 3.3 Upload kode dan install dependency
+### 3.3 Upload the code and install dependencies
 
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin auction
 sudo mkdir -p /opt/discord-auction
 sudo chown auction:auction /opt/discord-auction
 
-# clone repo (atau upload via scp/rsync, tanpa folder .venv dan .env)
-sudo -u auction git clone <url-repo> /opt/discord-auction
+# clone the repo (or upload via scp/rsync, without .venv and .env)
+sudo -u auction git clone <repo-url> /opt/discord-auction
 cd /opt/discord-auction
 
 sudo -u auction python3.12 -m venv .venv
 sudo -u auction .venv/bin/pip install -r requirements.txt
 ```
 
-### 3.4 Isi `.env`
+### 3.4 Fill in `.env`
 
 ```bash
 sudo -u auction cp .env.example .env
@@ -128,24 +130,28 @@ DISCORD_APPLICATION_ID=123456789012345678
 DISCORD_PUBLIC_KEY=abcdef...
 DISCORD_BOT_TOKEN=MTIz...
 DISCORD_GUILD_ID=
-DATABASE_URL=postgresql://auction:ganti_password_kuat@localhost:5432/discord_auction
+DATABASE_URL=postgresql://auction:change_to_a_strong_password@localhost:5432/discord_auction
+ADMIN_PASSWORD=your_admin_password
 ```
 
-- Kosongkan `DISCORD_GUILD_ID` untuk mendaftarkan command secara **global** (berlaku di semua server
-  tempat bot di-invite; propagasi bisa sampai 1 jam).
-- Isi `DISCORD_GUILD_ID` kalau bot hanya untuk satu server; command langsung muncul.
+- `ADMIN_PASSWORD` is required; the app won't start without it. Admins type it into the `password`
+  option of `/add-item` and `/delete-item`.
 
-Lalu daftarkan command:
+- Leave `DISCORD_GUILD_ID` empty to register the commands **globally** (in every server the bot is invited to;
+  it can take up to 1 hour to propagate).
+- Set `DISCORD_GUILD_ID` if the bot is for a single server; commands appear immediately.
+
+Then register the commands:
 
 ```bash
 sudo -u auction .venv/bin/python -m scripts.register_commands
 ```
 
-Ulangi perintah ini setiap kali `DEFINITIONS` di `app/commands.py` berubah.
+Re-run this whenever `DEFINITIONS` in `app/commands.py` changes.
 
-### 3.5 Jalankan sebagai service (systemd)
+### 3.5 Run it as a service (systemd)
 
-Buat `/etc/systemd/system/discord-auction.service`:
+Create `/etc/systemd/system/discord-auction.service`:
 
 ```ini
 [Unit]
@@ -168,20 +174,20 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now discord-auction
 sudo systemctl status discord-auction
-curl http://127.0.0.1:8000/health     # harus {"status":"ok"}
+curl http://127.0.0.1:8000/health     # must return {"status":"ok"}
 ```
 
-App hanya listen di `127.0.0.1`; akses dari luar lewat Nginx. Semua state ada di Postgres, jadi aman
-memakai lebih dari satu worker.
+The app only listens on `127.0.0.1`; outside traffic comes in through Nginx. All state lives in Postgres,
+so running more than one worker is safe.
 
 ### 3.6 Nginx + HTTPS
 
-Buat `/etc/nginx/sites-available/discord-auction`:
+Create `/etc/nginx/sites-available/discord-auction`:
 
 ```nginx
 server {
     listen 80;
-    server_name auction.domainkamu.com;
+    server_name auction.yourdomain.com;
 
     location / {
         proxy_pass http://127.0.0.1:8000;
@@ -196,105 +202,111 @@ server {
 sudo ln -s /etc/nginx/sites-available/discord-auction /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 
-sudo certbot --nginx -d auction.domainkamu.com   # pasang SSL + auto-renew
+sudo certbot --nginx -d auction.yourdomain.com   # installs SSL + auto-renewal
 
 sudo ufw allow OpenSSH
 sudo ufw allow 'Nginx Full'
 sudo ufw enable
 ```
 
-Cek dari luar: `curl https://auction.domainkamu.com/health`.
+Check from outside: `curl https://auction.yourdomain.com/health` must return `{"status":"ok"}`.
+If you get HTML from another app instead, the domain is routed to the wrong upstream (see Troubleshooting).
 
-**Alternatif tanpa domain/port terbuka:** pakai [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
-dengan *named tunnel* (bukan quick tunnel) yang mengarah ke `http://localhost:8000`, lalu lewati bagian Nginx/certbot.
+**Alternative without a domain/open ports:** use a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+with a *named tunnel* (not a quick tunnel) pointing to `http://localhost:8000`, and skip the Nginx/certbot part.
 
-### 3.7 Hubungkan ke Discord
+If the domain is behind Cloudflare, turn off Bot Fight Mode / challenges for this hostname (or add a
+*Skip* rule for `/interactions`), otherwise Discord's requests may be blocked.
 
-1. Developer Portal → aplikasi kamu → **General Information**.
-2. Isi **Interactions Endpoint URL**: `https://auction.domainkamu.com/interactions` → **Save Changes**.
-3. Discord akan mengirim PING bertanda tangan dan request dengan signature palsu. Save hanya berhasil
-   kalau server membalas PONG dan menolak signature yang salah (401). Kalau gagal, lihat bagian Troubleshooting.
-4. Pastikan bot sudah di-invite ke server (langkah 1.5), lalu ketik `/` di channel. Command bot akan muncul.
+### 3.7 Connect it to Discord
 
-Selesai. Coba `/add-item` (sebagai admin) lalu `/bid-item` dan `/status`.
+1. Developer Portal → your application → **General Information**.
+2. Set **Interactions Endpoint URL** to `https://auction.yourdomain.com/interactions` → **Save Changes**.
+3. Discord sends a signed PING and a request with a fake signature. Saving only succeeds if the server replies
+   with PONG and rejects the bad signature (401). If it fails, see Troubleshooting.
+4. Make sure the bot has been invited (step 1.5), then type `/` in a channel. The bot's commands will show up.
+
+Done. Try `/add-item` (as an admin), then `/bid-item` and `/status`.
 
 ---
 
-## Seeder item
+## Item seeder
 
-Untuk mengisi banyak item sekaligus (tanpa `/add-item` satu per satu), isi `scripts/data/items.json`:
+To add many items at once (instead of running `/add-item` one by one), fill in `scripts/data/items.json`:
 
 ```json
 [
-  {"name": "Nama Item", "description": "Deskripsi opsional"},
-  {"name": "Item Lain"}
+  {"name": "Item Name", "description": "Optional description"},
+  {"name": "Another Item"}
 ]
 ```
 
-lalu jalankan:
+then run:
 
 ```
-python -m scripts.seed_items                    # pakai scripts/data/items.json
-python -m scripts.seed_items path/lain.json     # atau file lain
+python -m scripts.seed_items                    # uses scripts/data/items.json
+python -m scripts.seed_items path/other.json    # or another file
 ```
 
-Item yang namanya sudah ada (tidak peduli huruf besar/kecil) dilewati, jadi aman dijalankan berulang.
-Nama maksimal 100 karakter.
+Items whose name already exists (case-insensitive) are skipped, so it is safe to re-run.
+Names can be at most 100 characters.
 
 ---
 
-## 4. Operasional
+## 4. Operations
 
-**Lihat log**
+**View logs**
 ```bash
 sudo journalctl -u discord-auction -f
 ```
 
-**Update kode**
+**Update the code**
 ```bash
 cd /opt/discord-auction
 sudo -u auction git pull
 sudo -u auction .venv/bin/pip install -r requirements.txt
-sudo -u auction .venv/bin/python -m scripts.register_commands   # kalau ada perubahan command
+sudo -u auction .venv/bin/python -m scripts.register_commands   # if commands changed
 sudo systemctl restart discord-auction
 ```
 
-**Backup database**
+**Back up the database**
 ```bash
 sudo -u postgres pg_dump discord_auction > backup_$(date +%F).sql
 # restore: sudo -u postgres psql discord_auction < backup_YYYY-MM-DD.sql
 ```
 
-**Health check**: `GET /health` mengecek koneksi ke database. Bisa dipakai untuk uptime monitor.
+**Health check**: `GET /health` checks the database connection. You can point an uptime monitor at it.
 
-**Keamanan**
-- Jangan commit `.env` (sudah ada di `.gitignore`). Kalau token bocor, segera **Reset Token** di menu Bot.
-- Endpoint `/interactions` memverifikasi signature Ed25519 dari Discord, jadi request palsu ditolak dengan 401.
-- Postgres jangan diekspos ke internet; pakai password yang kuat.
+**Security**
+- Never commit `.env` (it's already in `.gitignore`). If the token leaks, **Reset Token** under Bot right away.
+- `/interactions` verifies Discord's Ed25519 signature, so forged requests are rejected with 401.
+- Don't expose Postgres to the internet; use a strong password.
 
 ---
 
 ## 5. Troubleshooting
 
-| Gejala | Penyebab / solusi |
+| Symptom | Cause / fix |
 |---|---|
-| Save Interactions Endpoint URL gagal ("could not be verified") | Server tidak bisa diakses lewat HTTPS, `DISCORD_PUBLIC_KEY` salah (atau milik aplikasi lain), atau service mati. Cek `curl https://domain/health` dan `journalctl`. |
-| Command tidak muncul saat ketik `/` | Belum menjalankan `register_commands`, bot belum di-invite dengan scope `applications.commands`, atau command global masih propagasi (tunggu hingga 1 jam / pakai `DISCORD_GUILD_ID`). Coba juga restart aplikasi Discord (Ctrl+R). |
-| Command admin tidak terlihat oleh member | Disengaja: command admin memakai `default_member_permissions` Manage Server. Bisa diubah di *Server Settings → Integrations*. |
-| "The application did not respond" | Server telat membalas (>3 detik) atau error. Cek log dan koneksi ke database. |
-| App gagal start: `Environment variable ... belum diisi` | `.env` tidak ada di `WorkingDirectory` atau variabelnya kosong. |
-| `register_commands` gagal 401 | `DISCORD_BOT_TOKEN` salah atau sudah di-reset. |
+| Saving the Interactions Endpoint URL fails ("could not be verified") | The server isn't reachable over HTTPS, `DISCORD_PUBLIC_KEY` is wrong (or from another application), or the service is down. Check `curl https://domain/health` and `journalctl`. |
+| `/health` returns HTML from another app, or `POST /interactions` returns 405 | The domain is routed to a different app. Fix the Nginx `server_name`/`proxy_pass`, tunnel route, or hosting panel so it points to `127.0.0.1:8000`. |
+| Commands don't show up when typing `/` | `register_commands` hasn't been run, the bot wasn't invited with the `applications.commands` scope, or global commands are still propagating (wait up to 1 hour / use `DISCORD_GUILD_ID`). Also try reloading Discord (Ctrl+R). |
+| Members can't see admin commands | Intended: admin commands use `default_member_permissions` Manage Server. You can change this under *Server Settings → Integrations*. |
+| "The application did not respond" | The server took longer than 3 seconds or errored. Check the logs and the database connection. |
+| App fails to start: `Environment variable ... is not set` | `.env` is missing from the `WorkingDirectory`, or the variable is empty. |
+| `register_commands` fails with 401 | `DISCORD_BOT_TOKEN` is wrong or has been reset. |
 
 ---
 
-## Struktur
+## Project layout
 
 ```
-app/main.py        endpoint /interactions (verifikasi signature + routing) dan /health
-app/commands.py    definisi slash command + handler command & dropdown
-app/db.py          query PostgreSQL (asyncpg)
-app/discord.py     helper Interactions API (signature, response, followup)
-app/config.py      baca konfigurasi dari .env
-schema.sql         tabel items & bids (antrian = urutan id bid)
-scripts/register_commands.py   daftarkan slash command ke Discord
+app/main.py        /interactions endpoint (signature check + routing) and /health
+app/commands.py    slash command definitions + command & dropdown handlers
+app/db.py          PostgreSQL queries (asyncpg)
+app/discord.py     Interactions API helpers (signature, responses, followups)
+app/config.py      reads configuration from .env
+schema.sql         items & bids tables (queue = bid id order)
+scripts/register_commands.py   registers slash commands with Discord
+scripts/seed_items.py          seeds items from scripts/data/items.json
 ```

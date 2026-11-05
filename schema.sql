@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS items (
 
 CREATE UNIQUE INDEX IF NOT EXISTS items_name_lower_uq ON items (lower(name));
 
--- Antrian bid: urutan ditentukan oleh id (yang bid duluan = id lebih kecil)
+-- Bid queue: order is determined by id (earlier bid = smaller id)
 CREATE TABLE IF NOT EXISTS bids (
     id         BIGSERIAL PRIMARY KEY,
     item_id    BIGINT NOT NULL REFERENCES items(id) ON DELETE CASCADE,

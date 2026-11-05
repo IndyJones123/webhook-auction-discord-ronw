@@ -1,9 +1,9 @@
-"""Isi tabel items dari scripts/data/items.json.
+"""Seed the items table from scripts/data/items.json.
 
-Jalankan: python -m scripts.seed_items [path/ke/file.json]
+Run: python -m scripts.seed_items [path/to/file.json]
 
-Format file: list of {"name": "...", "description": "..."} (description opsional).
-Item yang namanya sudah ada (case-insensitive) dilewati, jadi aman dijalankan berulang.
+File format: list of {"name": "...", "description": "..."} (description is optional).
+Items whose name already exists (case-insensitive) are skipped, so it is safe to re-run.
 """
 
 import asyncio
@@ -22,9 +22,9 @@ def load_items(path: Path) -> list[tuple[str, str | None]]:
     for i, entry in enumerate(raw, 1):
         name = str(entry.get("name", "")).strip()
         if not name:
-            raise SystemExit(f"Entry ke-{i} tidak punya 'name'")
+            raise SystemExit(f"Entry #{i} has no 'name'")
         if len(name) > 100:
-            raise SystemExit(f"Nama '{name[:30]}…' lebih dari 100 karakter")
+            raise SystemExit(f"Name '{name[:30]}…' is longer than 100 characters")
         description = (entry.get("description") or "").strip() or None
         items.append((name, description))
     return items
@@ -34,7 +34,7 @@ async def main() -> None:
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PATH
     items = load_items(path)
     if not items:
-        raise SystemExit(f"Tidak ada item di {path}")
+        raise SystemExit(f"No items in {path}")
 
     await db.connect()
     try:
@@ -52,11 +52,11 @@ async def main() -> None:
                     inserted += 1
                     print(f"  + {name}")
                 else:
-                    print(f"  = {name} (sudah ada)")
+                    print(f"  = {name} (already exists)")
     finally:
         await db.close()
 
-    print(f"{inserted} item baru, {len(items) - inserted} dilewati.")
+    print(f"{inserted} new items, {len(items) - inserted} skipped.")
 
 
 if __name__ == "__main__":

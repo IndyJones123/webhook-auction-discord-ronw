@@ -6,7 +6,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 
 from . import db
 from . import discord as dc
-from .commands import COMMAND_HANDLERS, SELECT_HANDLERS
+from .commands import COMMAND_HANDLERS, SELECT_HANDLERS, on_page_button
 
 log = logging.getLogger("uvicorn.error")
 
@@ -49,11 +49,13 @@ async def interactions(request: Request, bg: BackgroundTasks):
 
         elif kind == dc.MESSAGE_COMPONENT:
             data = interaction["data"]
+            if data["custom_id"].startswith("page:"):
+                return await on_page_button(interaction, data["custom_id"], bg)
             handler = SELECT_HANDLERS.get(data["custom_id"])
-            if handler:
+            if handler and data.get("values"):
                 return await handler(interaction, data["values"][0], bg)
     except Exception:
-        log.exception("Gagal memproses interaction")
-        return dc.message("Terjadi kesalahan di server, coba lagi.", ephemeral=True)
+        log.exception("Failed to process interaction")
+        return dc.message("Something went wrong on the server, please try again.", ephemeral=True)
 
-    return dc.message("Command tidak dikenal.", ephemeral=True)
+    return dc.message("Unknown command.", ephemeral=True)
